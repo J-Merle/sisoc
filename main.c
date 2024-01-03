@@ -1,16 +1,20 @@
 #include <assert.h>
-#include <string.h>
+#include <pulse/subscribe.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/poll.h>
 #include <unistd.h>
 
 #include "raylib.h"
 #include "pulse/context.h"
 #include "pulse/mainloop.h"
+#include "pulse/pulseaudio.h"
 
 #define SSC_APP_NAME "Sisoc"
 
 void context_state_callback(pa_context *c, void *userdata);
+void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata);
+void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata);
 
 
 typedef struct {
@@ -20,32 +24,26 @@ typedef struct {
 
 int main(void) {
 
-    const int screenWidth = 800;
-    const int screenHeight = 450;
+    const int screenWidth = 450;
+    const int screenHeight = 800;
 
-    pa_context *context = NULL;
-    pa_mainloop *mainloop = NULL;
-    mainloop = pa_mainloop_new();
+    pa_mainloop *mainloop = pa_mainloop_new();
+    assert(mainloop);
+    int *mainloop_retval = 0;
     pa_mainloop_api* api = pa_mainloop_get_api(mainloop);
-
-
-    pa_proplist *proplist = pa_proplist_new();
-
-    InitWindow(screenWidth, screenHeight, SSC_APP_NAME);
-
-    SetTargetFPS(60);
-
-    // Pulseaudio initialization
-
     assert(api);
 
+    pa_proplist *proplist = pa_proplist_new();
     pa_proplist_sets(proplist, PA_PROP_APPLICATION_NAME, SSC_APP_NAME);
     pa_proplist_sets(proplist, PA_PROP_APPLICATION_ID, "org.jmerle.sisoc");
     pa_proplist_sets(proplist, PA_PROP_APPLICATION_ICON_NAME, "audio-card");
     pa_proplist_sets(proplist, PA_PROP_APPLICATION_VERSION, "0.1");
 
-    context = pa_context_new_with_proplist(api, NULL, proplist);
+    pa_context *context = pa_context_new_with_proplist(api, NULL, proplist);
     assert(context);
+
+    InitWindow(screenWidth, screenHeight, SSC_APP_NAME);
+    SetTargetFPS(60);
 
     ssc_userdata userdata = {
         .state_i18n = "Non connecté",
@@ -60,7 +58,6 @@ int main(void) {
     }
 
 
-    int *mainloop_retval = 0;
     while (!WindowShouldClose())
     {
         pa_mainloop_iterate(mainloop, 0, mainloop_retval);
@@ -75,6 +72,7 @@ int main(void) {
         BeginDrawing();
 
         ClearBackground(RAYWHITE);
+
         DrawCircle(15, 15, 10, userdata.state_color);
         DrawText(userdata.state_i18n, 30, 5, 18, userdata.state_color);
 
@@ -86,6 +84,7 @@ end:
 
     return 0;
 }
+
 
 void context_state_callback(pa_context *c, void *userdata) {
     switch (pa_context_get_state(c)) {
@@ -105,6 +104,14 @@ void context_state_callback(pa_context *c, void *userdata) {
             TraceLog(LOG_INFO, "Context is READY");
             ((ssc_userdata*) userdata)->state_color = GREEN;
             strcpy(((ssc_userdata*) userdata)->state_i18n, "Connecté");
+
+            pa_context_set_subscribe_callback(c, subscribe_cb, userdata);
+            pa_operation *o;
+
+            if (!(o = pa_context_get_sink_info_list(c, sink_cb, userdata))) {
+                return;
+            }
+            pa_operation_unref(o);
             break;
         case PA_CONTEXT_FAILED:
             TraceLog(LOG_ERROR, "Context state is FAILED");
@@ -117,4 +124,26 @@ void context_state_callback(pa_context *c, void *userdata) {
             TraceLog(LOG_ERROR, "Context state is TERMINATED");
             return;
     }
+}
+
+void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata) {
+    switch (t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
+        case PA_SUBSCRIPTION_EVENT_SINK :
+            TraceLog(LOG_INFO, "EVENT SINK");
+            break;
+        case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
+            TraceLog(LOG_INFO, "EVENT SINK");
+            break;
+        case PA_SUBSCRIPTION_EVENT_CLIENT:
+            TraceLog(LOG_INFO, "EVENT CLIENT");
+            break;
+        default :
+            TraceLog(LOG_INFO, "OTHER EVENT");
+            break;
+    }
+
+}
+
+void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
+    TraceLog(LOG_INFO, "New sink registered");
 }
