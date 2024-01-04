@@ -13,9 +13,9 @@
 #define SSC_APP_NAME "Sisoc"
 #define SIZE_SINK_ARRAY 20
 
-void context_state_callback(pa_context *c, void *userdata);
-void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata);
-void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata);
+void context_state_callback(pa_context *c, void *data);
+void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *data);
+void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *data);
 
 
 typedef struct {
@@ -109,29 +109,24 @@ int main(void) {
 
 end:
     CloseWindow();
+    // TODO free userdata ?
 
     return 0;
 }
 
 
-void context_state_callback(pa_context *c, void *userdata) {
+void context_state_callback(pa_context *c, void *data) {
+    ssc_userdata *userdata = ((ssc_userdata*) data);
     switch (pa_context_get_state(c)) {
         case PA_CONTEXT_UNCONNECTED:
-            TraceLog(LOG_INFO, "Context is UNCONNECTED");
-            break;
         case PA_CONTEXT_CONNECTING:
-            TraceLog(LOG_INFO, "Context is CONNECTING");
-            break;
         case PA_CONTEXT_AUTHORIZING:
-            TraceLog(LOG_INFO, "Context is AUTHORIZING");
-            break;
         case PA_CONTEXT_SETTING_NAME:
-            TraceLog(LOG_INFO, "Context is SETTING NAME");
             break;
         case PA_CONTEXT_READY: 
             TraceLog(LOG_INFO, "Context is READY");
-            ((ssc_userdata*) userdata)->state_color = GREEN;
-            strcpy(((ssc_userdata*) userdata)->state_i18n, "Connecté");
+            userdata->state_color = GREEN;
+            strcpy(userdata->state_i18n, "Connecté");
 
             pa_context_set_subscribe_callback(c, subscribe_cb, userdata);
             pa_operation *o;
@@ -155,8 +150,8 @@ void context_state_callback(pa_context *c, void *userdata) {
             break;
         case PA_CONTEXT_FAILED:
             TraceLog(LOG_ERROR, "Context state is FAILED");
-            ((ssc_userdata*) userdata)->state_color = RED;
-            strcpy(((ssc_userdata*) userdata)->state_i18n, "Erreur");
+            userdata->state_color = RED;
+            strcpy(userdata->state_i18n, "Erreur");
             c = NULL;
             return;
         case PA_CONTEXT_TERMINATED:
@@ -166,20 +161,13 @@ void context_state_callback(pa_context *c, void *userdata) {
     }
 }
 
-void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata) {
-
-    TraceLog(LOG_INFO, "Inside callback : %d", t);
+void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *data) {
+    ssc_userdata *userdata = ((ssc_userdata*) data);
     switch (t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
         case PA_SUBSCRIPTION_EVENT_SINK :
             if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
-                TraceLog(LOG_INFO, "Will remove sink with index %d", index);
-                ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
-                for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
-                    if(sinks[i].index == index) {
-                        ssc_sink_info empt_sink = {-1, ""};
-                        sinks[i] = empt_sink;
-                    }
-                }
+                ssc_sink_info empty_sink = {-1, ""};
+                userdata->sinks[index] = empty_sink;
             } else {
                 pa_operation *o;
                 if (!(o = pa_context_get_sink_info_by_index(c, index, sink_cb, userdata))) {
@@ -187,7 +175,6 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
                     return;
                 }
                 pa_operation_unref(o);
-                TraceLog(LOG_INFO, "EVENT SINK");
                 break;
             }
         case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
@@ -215,6 +202,6 @@ void sink_cb(pa_context *c, const pa_sink_info *info, int eol, void *userdata) {
         strcpy(new_sink_info.description, info->description);
         sinks[info->index] = new_sink_info;
         TraceLog(LOG_INFO, "Registered new sink [%d %s]", info->index, sinks[info->index].description);
-                return;
+        return;
     }
 }
