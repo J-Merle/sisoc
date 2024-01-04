@@ -11,6 +11,7 @@
 #include "pulse/pulseaudio.h"
 
 #define SSC_APP_NAME "Sisoc"
+#define SIZE_SINK_ARRAY 20
 
 void context_state_callback(pa_context *c, void *userdata);
 void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata);
@@ -18,8 +19,16 @@ void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata);
 
 
 typedef struct {
+    int index;
+    char description[200];
+} ssc_sink_info;
+
+
+
+typedef struct {
     char state_i18n[20];
     Color state_color;
+    ssc_sink_info sinks[SIZE_SINK_ARRAY];
 } ssc_userdata;
 
 int main(void) {
@@ -47,8 +56,18 @@ int main(void) {
 
     ssc_userdata userdata = {
         .state_i18n = "Non connecté",
-        .state_color = DARKGRAY
+        .state_color = DARKGRAY,
+        .sinks = {
+            {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""},
+            {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""},
+            {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""},
+            {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""}, {-1, ""},
+        } // TODO this could be done with a macro or something else
     };
+
+    // Init sinks with empty sinks
+
+    
 
     pa_context_set_state_callback(context, context_state_callback, &userdata);
 
@@ -75,6 +94,13 @@ int main(void) {
 
         DrawCircle(15, 15, 10, userdata.state_color);
         DrawText(userdata.state_i18n, 30, 5, 18, userdata.state_color);
+
+        for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
+
+            if(&(userdata.sinks[i])) {
+                DrawText(userdata.sinks[i].description, 30, 5 + (i + 1) * 30, 14, BLACK);
+            }
+        }
 
         EndDrawing();
     }
@@ -144,6 +170,17 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
 
 }
 
-void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *userdata) {
-    TraceLog(LOG_INFO, "New sink registered");
+void sink_cb(pa_context *c, const pa_sink_info *info, int eol, void *userdata) {
+    if(info) {
+        ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
+        for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
+            if(sinks[i].index == -1) {
+                ssc_sink_info new_sink_info = {.index = info->index};
+                strcpy(new_sink_info.description, info->description);
+                sinks[i] = new_sink_info;
+                TraceLog(LOG_INFO, "Registered new sink [%d %s] at index %d", sinks[i].index, sinks[i].description, i);
+                return;
+            }
+        }
+    }
 }
