@@ -6,9 +6,9 @@
 #include <unistd.h>
 
 #include "raylib.h"
-#include "pulse/context.h"
-#include "pulse/mainloop.h"
-#include "pulse/pulseaudio.h"
+#include <pulse/context.h>
+#include <pulse/mainloop.h>
+#include <pulse/pulseaudio.h>
 
 #define SSC_APP_NAME "Sisoc"
 #define SIZE_SINK_ARRAY 20
@@ -26,7 +26,7 @@ typedef struct {
 
 
 typedef struct {
-    char state_i18n[20];
+    char state_i18n[20]; // TODO should be an enum 
     Color state_color;
     ssc_sink_info sinks[SIZE_SINK_ARRAY];
 } ssc_userdata;
@@ -94,11 +94,13 @@ int main(void) {
 
         DrawCircle(15, 15, 10, userdata.state_color);
         DrawText(userdata.state_i18n, 30, 5, 18, userdata.state_color);
+        int vertical_offset = 5;
 
         for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
 
-            if(&(userdata.sinks[i])) {
-                DrawText(userdata.sinks[i].description, 30, 5 + (i + 1) * 30, 14, BLACK);
+            if(userdata.sinks[i].index >= 0) {
+                vertical_offset += 30;
+                DrawText(userdata.sinks[i].description, 30, vertical_offset, 14, BLACK);
             }
         }
 
@@ -134,6 +136,18 @@ void context_state_callback(pa_context *c, void *userdata) {
             pa_context_set_subscribe_callback(c, subscribe_cb, userdata);
             pa_operation *o;
 
+            if (!(o = pa_context_subscribe(c,
+                                           (pa_subscription_mask_t)(PA_SUBSCRIPTION_MASK_SINK |
+                                             PA_SUBSCRIPTION_MASK_SINK_INPUT |
+                                             PA_SUBSCRIPTION_MASK_CLIENT
+                                             ),
+                                           NULL,
+                                           NULL))) {
+                TraceLog(LOG_ERROR, "Error will subscribing");
+                return;
+            }
+            pa_operation_unref(o);
+
             if (!(o = pa_context_get_sink_info_list(c, sink_cb, userdata))) {
                 return;
             }
@@ -153,10 +167,29 @@ void context_state_callback(pa_context *c, void *userdata) {
 }
 
 void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *userdata) {
+
+    TraceLog(LOG_INFO, "Inside callback : %d", t);
     switch (t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
         case PA_SUBSCRIPTION_EVENT_SINK :
-            TraceLog(LOG_INFO, "EVENT SINK");
-            break;
+            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
+                TraceLog(LOG_INFO, "Will remove sink with index %d", index);
+                ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
+                for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
+                    if(sinks[i].index == index) {
+                        ssc_sink_info empt_sink = {-1, ""};
+                        sinks[i] = empt_sink;
+                    }
+                }
+            } else {
+                pa_operation *o;
+                if (!(o = pa_context_get_sink_info_by_index(c, index, sink_cb, userdata))) {
+                    TraceLog(LOG_ERROR, "Error while retrieving sink info");
+                    return;
+                }
+                pa_operation_unref(o);
+                TraceLog(LOG_INFO, "EVENT SINK");
+                break;
+            }
         case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
             TraceLog(LOG_INFO, "EVENT SINK");
             break;
@@ -172,15 +205,16 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
 
 void sink_cb(pa_context *c, const pa_sink_info *info, int eol, void *userdata) {
     if(info) {
-        ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
-        for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
-            if(sinks[i].index == -1) {
-                ssc_sink_info new_sink_info = {.index = info->index};
-                strcpy(new_sink_info.description, info->description);
-                sinks[i] = new_sink_info;
-                TraceLog(LOG_INFO, "Registered new sink [%d %s] at index %d", sinks[i].index, sinks[i].description, i);
-                return;
-            }
+        if(eol != 0) return;
+        if(info->index >= SIZE_SINK_ARRAY) {
+            TraceLog(LOG_ERROR, "Sink index overflow");
+            // TODO implement hash map to recover this
         }
+        ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
+        ssc_sink_info new_sink_info = {.index = info->index};
+        strcpy(new_sink_info.description, info->description);
+        sinks[info->index] = new_sink_info;
+        TraceLog(LOG_INFO, "Registered new sink [%d %s]", info->index, sinks[info->index].description);
+                return;
     }
 }
