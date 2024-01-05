@@ -12,23 +12,30 @@
 
 #define SSC_APP_NAME "Sisoc"
 #define SIZE_SINK_ARRAY 20
+#define SIZE_SINK_INPUT_ARRAY 100
+#define OFFSET_HORZ_SINK_INPUT 40
 
 void context_state_callback(pa_context *c, void *data);
 void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index, void *data);
 void sink_cb(pa_context *c, const pa_sink_info *i, int eol, void *data);
+void sink_input_cb(pa_context *c, const pa_sink_input_info *info, int eol, void *userdata);
 
+typedef struct {
+    int index;
+    int sink_index;
+    char description[200];
+} ssc_sink_input_info;
 
 typedef struct {
     int index;
     char description[200];
 } ssc_sink_info;
 
-
-
 typedef struct {
     char state_i18n[20]; // TODO should be an enum 
     Color state_color;
     ssc_sink_info sinks[SIZE_SINK_ARRAY];
+    ssc_sink_input_info sink_inputs[SIZE_SINK_INPUT_ARRAY];
 } ssc_userdata;
 
 int main(void) {
@@ -65,6 +72,11 @@ int main(void) {
         } // TODO this could be done with a macro or something else
     };
 
+    for(int i = 0; i < SIZE_SINK_INPUT_ARRAY; i++) {
+        ssc_sink_input_info empty_sink_input = {-1, -1, ""};
+        userdata.sink_inputs[i] = empty_sink_input;
+    }
+
     // Init sinks with empty sinks
 
     
@@ -96,13 +108,22 @@ int main(void) {
         DrawText(userdata.state_i18n, 30, 5, 18, userdata.state_color);
         int vertical_offset = 5;
 
+        // Display sinks and associated inputs
         for(int i = 0; i < SIZE_SINK_ARRAY; i++) {
 
             if(userdata.sinks[i].index >= 0) {
                 vertical_offset += 30;
                 DrawText(userdata.sinks[i].description, 30, vertical_offset, 14, BLACK);
             }
+
+            for(int j = 0; j < SIZE_SINK_INPUT_ARRAY; j++) {
+                if(userdata.sink_inputs[j].index >= 0 && (userdata.sink_inputs[j].sink_index == userdata.sinks[i].index)) {
+                    vertical_offset += 30;
+                    DrawText(userdata.sink_inputs[j].description, OFFSET_HORZ_SINK_INPUT, vertical_offset, 16, DARKGRAY);
+                }
+            }
         }
+
 
         EndDrawing();
     }
@@ -147,6 +168,12 @@ void context_state_callback(pa_context *c, void *data) {
                 return;
             }
             pa_operation_unref(o);
+
+            if(!(o = pa_context_get_sink_input_info_list(c, sink_input_cb, userdata))){
+                return;
+            }
+            pa_operation_unref(o);
+
             break;
         case PA_CONTEXT_FAILED:
             TraceLog(LOG_ERROR, "Context state is FAILED");
@@ -175,10 +202,20 @@ void subscribe_cb(pa_context *c, pa_subscription_event_type_t t, uint32_t index,
                     return;
                 }
                 pa_operation_unref(o);
-                break;
             }
+            break;
         case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
-            TraceLog(LOG_INFO, "EVENT SINK");
+            if ((t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) == PA_SUBSCRIPTION_EVENT_REMOVE) {
+                ssc_sink_input_info empty_sink_input = {-1, -1, ""};
+                userdata->sink_inputs[index] = empty_sink_input;
+            } else {
+                pa_operation *o;
+                if (!(o = pa_context_get_sink_input_info(c, index, sink_input_cb, userdata))) {
+                    TraceLog(LOG_ERROR, "Error while retrieving sink input info");
+                    return;
+                }
+                pa_operation_unref(o);
+            }
             break;
         case PA_SUBSCRIPTION_EVENT_CLIENT:
             TraceLog(LOG_INFO, "EVENT CLIENT");
@@ -196,12 +233,29 @@ void sink_cb(pa_context *c, const pa_sink_info *info, int eol, void *userdata) {
         if(info->index >= SIZE_SINK_ARRAY) {
             TraceLog(LOG_ERROR, "Sink index overflow");
             // TODO implement hash map to recover this
+            return;
         }
         ssc_sink_info *sinks = ((ssc_userdata*) userdata)->sinks;
         ssc_sink_info new_sink_info = {.index = info->index};
         strcpy(new_sink_info.description, info->description);
         sinks[info->index] = new_sink_info;
-        TraceLog(LOG_INFO, "Registered new sink [%d %s]", info->index, sinks[info->index].description);
         return;
     }
+}
+
+void sink_input_cb(pa_context *c, const pa_sink_input_info *info, int eol, void *userdata) {
+    if(!info || eol != 0) return;
+    if(info->index >= SIZE_SINK_INPUT_ARRAY) {
+        TraceLog(LOG_ERROR, "Sink input index overflow");
+        // TODO implement hash map to recover this
+        return;
+    }
+    ssc_sink_input_info *sink_inputs = ((ssc_userdata*) userdata)->sink_inputs;
+    ssc_sink_input_info new_sink_input_info = { .index = info->index, .sink_index = info->sink };
+    strcpy(new_sink_input_info.description, pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_NAME));
+    sink_inputs[info->index] = new_sink_input_info;
+
+
+    TraceLog(LOG_INFO, "Registered new input [%s, %d]", new_sink_input_info.description, info->index);
+    return;
 }
